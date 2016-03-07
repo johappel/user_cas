@@ -27,8 +27,6 @@
 
 if (OCP\App::isEnabled('user_cas')) {
 
-	include_once('CAS.php');
-
 	require_once 'user_cas/user_cas.php';
 
 	OCP\App::registerAdmin('user_cas', 'settings');
@@ -41,18 +39,23 @@ if (OCP\App::isEnabled('user_cas')) {
 	OCP\Util::connectHook('OC_User', 'post_login', 'OC_USER_CAS_Hooks', 'post_login');
 	OCP\Util::connectHook('OC_User', 'logout', 'OC_USER_CAS_Hooks', 'logout');
 
-	if( isset($_GET['app']) && $_GET['app'] == 'user_cas' ) {
+	$force_login = shouldEnforceAuthentication();
 
-		require_once 'user_cas/auth.php';
+	if( (isset($_GET['app']) && $_GET['app'] == 'user_cas') || $force_login ) {
 
-		if (!OC_User::login('', '')) {
-			$error = true;
-			OC_Log::write('cas','Error trying to authenticate the user', OC_Log::DEBUG);
-		}
+		if (OC_USER_CAS :: initialized_php_cas()) {
+
+			phpCAS::forceAuthentication();
+
+			if (!OC_User::login('', '')) {
+				$error = true;
+				\OCP\Util::writeLog('cas','Error trying to authenticate the user', \OCP\Util::DEBUG);
+			}
 		
-		if (isset($_SERVER["QUERY_STRING"]) && !empty($_SERVER["QUERY_STRING"]) && $_SERVER["QUERY_STRING"] != 'app=user_cas') {
-			header( 'Location: ' . OC::$WEBROOT . '/?' . $_SERVER["QUERY_STRING"]);
-			exit();
+			if (isset($_SERVER["QUERY_STRING"]) && !empty($_SERVER["QUERY_STRING"]) && $_SERVER["QUERY_STRING"] != 'app=user_cas') {
+				header( 'Location: ' . OC::$WEBROOT . '/?' . $_SERVER["QUERY_STRING"]);
+				exit();
+			}
 		}
 
 		OC::$REQUESTEDAPP = '';
@@ -60,10 +63,40 @@ if (OCP\App::isEnabled('user_cas')) {
 	}
 
 
-	if (!OCP\User::isLoggedIn()) {
+	if (!phpCAS::isAuthenticated() && !OCP\User::isLoggedIn()) {
 
 		// Load js code in order to render the CAS link and to hide parts of the normal login form
-		OCP\Util::addScript('user_cas', 'utils');
+		OCP\Util::addScript('user_cas', 'login');
 	}
 
 }
+
+/**
+ * Check if login should be enforced using user_cas
+ */
+function shouldEnforceAuthentication()
+{
+	if (OC::$CLI) {
+		return false;
+	}
+
+	if (OCP\Config::getAppValue('user_cas', 'cas_force_login', false) === false) {
+		return false;
+	}
+
+	if (OCP\User::isLoggedIn() || isset($_GET['admin_login'])) {
+		return false;
+	}
+
+	$script = basename($_SERVER['SCRIPT_FILENAME']);
+	return !in_array(
+		$script,
+		array(
+			'cron.php',
+			'public.php',
+			'remote.php',
+			'status.php',
+		)
+	);
+}
+
